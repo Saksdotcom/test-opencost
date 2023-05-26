@@ -18,6 +18,20 @@ resource:
             value: var.datadog_token
           - name: "datadog.apiKey"
             value: var.datadog_apikey
+  - "kubernetes_namespace":
+      "opencost":
+        metadata:
+          name: "opencost"
+
+  - "helm_release":
+      "opencost":
+        name: "opencost"
+        namespace: kubernetes_namespace.opencost.metadata[0].name
+        repository: "https://opencost.github.io/opencost-helm-chart"
+        chart: "opencost"
+        version: "1.1.0"
+        values:
+          - "${file(\"values.yaml\")}"
 
   - "helm_release":
       "ingress_nginx":
@@ -88,18 +102,3 @@ resource:
           - name: "server.persistentVolume.storageClass"
             value: "gp3"
 
-resource:
-  - "kubernetes_namespace":
-      "opencost":
-        metadata:
-          name: "opencost"
-
-  - "helm_release":
-      "opencost":
-        name: "opencost"
-        namespace: kubernetes_namespace.opencost.metadata[0].name
-        repository: "https://opencost.github.io/opencost-helm-chart"
-        chart: "opencost"
-        version: "1.1.0"
-        values:
-          - "${file(\"values.yaml\")}"
