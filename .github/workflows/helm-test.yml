@@ -1,57 +1,105 @@
-# CI Workflow for OpenCost Helm chart
-name: CI
+---
+resource:
+  - "helm_release":
+      "datadog":
+        name: "datadog"
+        repository: "https://saks.jfrog.io/artifactory/cx-helm-local"
+        chart: "datadog"
+        repository_username: var.artifactory_username
+        repository_password: var.artifactory_password
+        namespace: var.datadog_namespace
+        create_namespace: var.datadog_create_namespace
+        set:
+          - name: "clusterName"
+            value: module.eks.cluster_name
+          - name: "datadog.namespace"
+            value: var.datadog_namespace
+          - name: "datadog.token"
+            value: var.datadog_token
+          - name: "datadog.apiKey"
+            value: var.datadog_apikey
 
-# Controls when the workflow will run
-on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  - "helm_release":
+      "ingress_nginx":
+        name: "ingress-nginx"
+        namespace: var.ingress_controller_namespace
+        create_namespace: var.ingress_controller_create_namespace
+        chart: "ingress-nginx"
+        version: var.ingress_controller_version
+        repository: "https://kubernetes.github.io/ingress-nginx"
+        set:
+          - name: "controller.service.annotations.service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags"
+            value: "${join(\",\", [for k, v in local.tags : \"${k}=${v}\"])}"
+          - name: "controller.service.annotations.service.beta.kubernetes.io/aws-load-balancer-backend-protocol"
+            value: "http"
+          - name: "controller.service.annotations.service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled"
+            value: var.ingress_controller_cross_zone_load_balancing
+          - name: "controller.service.annotations.service.beta.kubernetes.io/aws-load-balancer-internal"
+            value: "true"
+          - name: "controller.service.annotations.service.beta.kubernetes.io/aws-load-balancer-ssl-cert"
+            value: aws_acm_certificate.wild_card_cluster_cert.arn
+          - name: "controller.service.annotations.service.beta.kubernetes.io/aws-load-balancer-ssl-ports"
+            value: "https"
+          - name: "controller.service.annotations.service.beta.kubernetes.io/aws-load-balancer-type"
+            value: "nlb"
+          - name: "controller.service.enableHttp"
+            value: false
+          - name: "controller.service.targetPorts.https"
+            value: "http"
+        depends_on:
+          - module.eks
 
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
+  - "helm_release":
+      "cilium":
+        name: "cilium"
+        namespace: var.cilium_namespace
+        create_namespace: var.cilium_create_namespace
+        chart: "cilium"
+        version: var.cilium_version
+        repository: "https://helm.cilium.io/"
+        set:
+          - name: "cni.chainingMode"
+            value: "aws-cni"
+          - name: "enableIPv4Masquerade"
+            value: false
+          - name: "tunnel"
+            value: "disabled"
+          - name: "endpointRoutes.enabled"
+            value: true
+        depends_on:
+          - module.eks
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
-jobs:
-  helm-test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
+  - "helm_release":
+      "prometheus":
+        name: "prometheus"
+        namespace: "prometheus"
+        create_namespace: true
+        chart: "prometheus"
+        repository: "https://prometheus-community.github.io/helm-charts"
+        values:
+          - "${file(\"./extraScrapeConfigs.yaml\")}"
+        set:
+          - name: "pushgateway.enabled"
+            value: "false"
+          - name: "alertmanager.enabled"
+            value: "false"
+          - name: "alertmanager.persistentVolume.storageClass"
+            value: "gp3"
+          - name: "server.persistentVolume.storageClass"
+            value: "gp3"
 
-      - uses: azure/setup-helm@v3
-        with:
-          version: v3.10.0
+resource:
+  - "kubernetes_namespace":
+      "opencost":
+        metadata:
+          name: "opencost"
 
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-          check-latest: true
-
-      - name: Set up chart-testing
-        uses: helm/chart-testing-action@v2.3.1
-
-      - name: List changed charts
-        id: list-changed
-        run: |
-          ## If executed with debug this won't work anymore.
-          changed=$(ct --config ./.github/configs/ct.yaml list-changed)
-          charts=$(echo "$changed" | tr '\n' ' ' | xargs)
-          if [[ -n "$changed" ]]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-            echo "changed_charts=$charts" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Run chart-testing (lint)
-        run: ct lint --debug --config ./.github/configs/ct.yaml --lint-conf ./.github/configs/lintconf.yaml
-
-      - name: Create kind cluster
-        uses: helm/kind-action@v1.4.0
-        if: steps.list-changed.outputs.changed == 'true'
-
-      - name: Run chart-testing (install)
-        run: ct install --config ./.github/configs/ct.yaml
-        if: steps.list-changed.outputs.changed == 'true'
+  - "helm_release":
+      "opencost":
+        name: "opencost"
+        namespace: kubernetes_namespace.opencost.metadata[0].name
+        repository: "https://opencost.github.io/opencost-helm-chart"
+        chart: "opencost"
+        version: "1.1.0"
+        values:
+          - "${file(\"values.yaml\")}"
